@@ -4,6 +4,7 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import com.notbraker.tracker.data.model.Habit
 import java.time.ZoneId
@@ -19,33 +20,60 @@ class ReminderScheduler(private val context: Context) {
         hour: Int,
         minute: Int
     ) {
-        val pendingIntent = createReminderPendingIntent(habitId, habitName, hour, minute)
+        val pendingIntent = createReminderPendingIntent(
+            habitId = habitId,
+            habitName = habitName,
+            hour = hour,
+            minute = minute,
+            isSnooze = false,
+            triggerAtMillis = null
+        )
         alarmManager.cancel(pendingIntent)
         val triggerAtMillis = nextTriggerMillis(hour, minute)
-        if (canScheduleExactAlarms()) {
-            try {
-                alarmManager.setExactAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    triggerAtMillis,
-                    pendingIntent
-                )
-            } catch (_: SecurityException) {
-                alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
-            }
-        } else {
-            alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
-        }
+        scheduleAt(triggerAtMillis = triggerAtMillis, pendingIntent = pendingIntent)
+    }
+
+    fun scheduleSnoozeReminder(
+        habitId: Long,
+        habitName: String,
+        hour: Int,
+        minute: Int,
+        snoozeMinutes: Int = 10
+    ) {
+        val triggerAtMillis = System.currentTimeMillis() + (snoozeMinutes.coerceIn(1, 120) * 60_000L)
+        val pendingIntent = createReminderPendingIntent(
+            habitId = habitId,
+            habitName = habitName,
+            hour = hour,
+            minute = minute,
+            isSnooze = true,
+            triggerAtMillis = triggerAtMillis
+        )
+        alarmManager.cancel(pendingIntent)
+        scheduleAt(triggerAtMillis = triggerAtMillis, pendingIntent = pendingIntent)
     }
 
     fun cancelReminder(habitId: Long) {
-        val pendingIntent = createReminderPendingIntent(
+        val dailyPendingIntent = createReminderPendingIntent(
             habitId = habitId,
             habitName = "",
             hour = 0,
-            minute = 0
+            minute = 0,
+            isSnooze = false,
+            triggerAtMillis = null
         )
-        alarmManager.cancel(pendingIntent)
-        pendingIntent.cancel()
+        alarmManager.cancel(dailyPendingIntent)
+        dailyPendingIntent.cancel()
+        val snoozePendingIntent = createReminderPendingIntent(
+            habitId = habitId,
+            habitName = "",
+            hour = 0,
+            minute = 0,
+            isSnooze = true,
+            triggerAtMillis = null
+        )
+        alarmManager.cancel(snoozePendingIntent)
+        snoozePendingIntent.cancel()
     }
 
     fun rescheduleAll(habits: List<Habit>) {
@@ -62,18 +90,26 @@ class ReminderScheduler(private val context: Context) {
         habitId: Long,
         habitName: String,
         hour: Int,
-        minute: Int
+        minute: Int,
+        isSnooze: Boolean,
+        triggerAtMillis: Long?
     ): PendingIntent {
         val intent = Intent(context, ReminderReceiver::class.java).apply {
             action = ReminderReceiver.ACTION_REMIND
+            data = if (isSnooze) {
+                Uri.parse("tracker://reminder/snooze/$habitId")
+            } else {
+                Uri.parse("tracker://reminder/daily/$habitId")
+            }
             putExtra(ReminderReceiver.EXTRA_HABIT_ID, habitId)
             putExtra(ReminderReceiver.EXTRA_HABIT_NAME, habitName)
             putExtra(ReminderReceiver.EXTRA_HOUR, hour)
             putExtra(ReminderReceiver.EXTRA_MINUTE, minute)
+            putExtra(ReminderReceiver.EXTRA_IS_SNOOZE, isSnooze)
         }
         return PendingIntent.getBroadcast(
             context,
-            requestCodeForHabit(habitId),
+            requestCodeForHabit(habitId, if (isSnooze) 2 else 1),
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -93,8 +129,23 @@ class ReminderScheduler(private val context: Context) {
         return trigger.toInstant().toEpochMilli()
     }
 
-    private fun requestCodeForHabit(habitId: Long): Int {
-        return (habitId % Int.MAX_VALUE).toInt()
+    private fun requestCodeForHabit(habitId: Long, salt: Int): Int =
+        (((habitId xor (habitId ushr 32)).toInt()) * 31 + salt)
+
+    private fun scheduleAt(triggerAtMillis: Long, pendingIntent: PendingIntent) {
+        if (canScheduleExactAlarms()) {
+            try {
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    triggerAtMillis,
+                    pendingIntent
+                )
+                return
+            } catch (_: SecurityException) {
+                // Continue with inexact fallback when exact alarms are not permitted.
+            }
+        }
+        alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
     }
 
     private fun canScheduleExactAlarms(): Boolean {

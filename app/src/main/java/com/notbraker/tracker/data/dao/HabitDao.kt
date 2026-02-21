@@ -9,12 +9,19 @@ import com.notbraker.tracker.data.model.DayCompletionCount
 import com.notbraker.tracker.data.model.Habit
 import com.notbraker.tracker.data.model.HabitCompletion
 import com.notbraker.tracker.data.model.HabitCompletionTotal
+import com.notbraker.tracker.data.model.Routine
+import com.notbraker.tracker.data.model.RoutineHabitCrossRef
+import com.notbraker.tracker.data.model.RoutineSummary
+import com.notbraker.tracker.data.model.RoutineWithHabits
 import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface HabitDao {
     @Query("SELECT * FROM habits WHERE isArchived = 0 ORDER BY sortOrder ASC, id ASC")
     fun observeActiveHabits(): Flow<List<Habit>>
+
+    @Query("SELECT * FROM habits WHERE isArchived = 0 ORDER BY sortOrder ASC, id ASC")
+    suspend fun getActiveHabits(): List<Habit>
 
     @Query("SELECT * FROM habits WHERE id = :habitId LIMIT 1")
     fun observeHabitById(habitId: Long): Flow<Habit?>
@@ -27,6 +34,9 @@ interface HabitDao {
 
     @Update
     suspend fun updateHabit(habit: Habit)
+
+    @Query("UPDATE habits SET sortOrder = :sortOrder WHERE id = :habitId")
+    suspend fun updateHabitSortOrder(habitId: Long, sortOrder: Int)
 
     @Query("DELETE FROM habits WHERE id = :habitId")
     suspend fun deleteHabit(habitId: Long)
@@ -43,6 +53,9 @@ interface HabitDao {
     @Query("SELECT * FROM habits WHERE isArchived = 0 AND reminderEnabled = 1")
     suspend fun getHabitsWithReminders(): List<Habit>
 
+    @Query("SELECT * FROM habits ORDER BY id ASC")
+    suspend fun getAllHabits(): List<Habit>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertCompletion(completion: HabitCompletion)
 
@@ -52,8 +65,66 @@ interface HabitDao {
     @Query("DELETE FROM habit_completions WHERE habitId = :habitId")
     suspend fun deleteCompletionsForHabit(habitId: Long)
 
+    @Query("SELECT * FROM habit_completions ORDER BY epochDay ASC")
+    suspend fun getAllCompletions(): List<HabitCompletion>
+
+    @Query("DELETE FROM habit_completions")
+    suspend fun clearAllCompletions()
+
+    @Query("DELETE FROM habits")
+    suspend fun clearAllHabits()
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertRoutine(routine: Routine): Long
+
+    @Query("DELETE FROM routines WHERE id = :routineId")
+    suspend fun deleteRoutine(routineId: Long)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertRoutineHabitRef(ref: RoutineHabitCrossRef)
+
+    @Query("DELETE FROM routine_habit_cross_ref WHERE routineId = :routineId")
+    suspend fun clearRoutineHabitRefs(routineId: Long)
+
+    @Query("DELETE FROM routine_habit_cross_ref")
+    suspend fun clearAllRoutineHabitRefs()
+
+    @Query("DELETE FROM routines")
+    suspend fun clearAllRoutines()
+
+    @Query("DELETE FROM routine_habit_cross_ref WHERE routineId = :routineId AND habitId = :habitId")
+    suspend fun deleteRoutineHabitRef(routineId: Long, habitId: Long)
+
+    @Query(
+        """
+        SELECT r.id, r.name, r.description, COUNT(rr.habitId) AS habitCount
+        FROM routines r
+        LEFT JOIN routine_habit_cross_ref rr ON rr.routineId = r.id
+        GROUP BY r.id
+        ORDER BY r.createdAtEpochMillis DESC, r.id DESC
+        """
+    )
+    fun observeRoutineSummaries(): Flow<List<RoutineSummary>>
+
+    @androidx.room.Transaction
+    @Query("SELECT * FROM routines WHERE id = :routineId LIMIT 1")
+    fun observeRoutineWithHabits(routineId: Long): Flow<RoutineWithHabits?>
+
+    @Query(
+        """
+        SELECT h.* FROM habits h
+        INNER JOIN routine_habit_cross_ref rr ON rr.habitId = h.id
+        WHERE rr.routineId = :routineId AND h.isArchived = 0
+        ORDER BY rr.sortOrder ASC, h.sortOrder ASC, h.id ASC
+        """
+    )
+    fun observeHabitsForRoutine(routineId: Long): Flow<List<Habit>>
+
     @Query("SELECT habitId FROM habit_completions WHERE epochDay = :epochDay")
     fun observeCompletedHabitIdsForDay(epochDay: Long): Flow<List<Long>>
+
+    @Query("SELECT habitId FROM habit_completions WHERE epochDay = :epochDay")
+    suspend fun getCompletedHabitIdsForDay(epochDay: Long): List<Long>
 
     @Query("SELECT * FROM habit_completions WHERE habitId = :habitId ORDER BY epochDay DESC")
     fun observeCompletionsForHabit(habitId: Long): Flow<List<HabitCompletion>>
@@ -69,7 +140,7 @@ interface HabitDao {
 
     @Query(
         """
-        SELECT epochDay, COUNT(*) AS completedCount
+        SELECT epochDay, COUNT(DISTINCT habitId) AS completedCount
         FROM habit_completions
         WHERE epochDay BETWEEN :fromEpochDay AND :toEpochDay
         GROUP BY epochDay
@@ -83,7 +154,7 @@ interface HabitDao {
 
     @Query(
         """
-        SELECT habitId, COUNT(*) AS completedCount
+        SELECT habitId, COUNT(DISTINCT epochDay) AS completedCount
         FROM habit_completions
         WHERE epochDay BETWEEN :fromEpochDay AND :toEpochDay
         GROUP BY habitId

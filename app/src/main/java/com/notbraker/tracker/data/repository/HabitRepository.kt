@@ -7,11 +7,19 @@ import com.notbraker.tracker.data.model.HabitCompletion
 import com.notbraker.tracker.data.model.HabitCompletionTotal
 import com.notbraker.tracker.data.model.HabitCreationResult
 import com.notbraker.tracker.data.model.HabitDayState
+import com.notbraker.tracker.data.model.HabitFrequencyType
+import com.notbraker.tracker.data.model.Routine
+import com.notbraker.tracker.data.model.RoutineHabitCrossRef
+import com.notbraker.tracker.data.model.RoutineSummary
+import com.notbraker.tracker.data.model.RoutineWithHabits
+import java.time.DayOfWeek
+import java.time.LocalDate
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
 class HabitRepository(
@@ -47,7 +55,36 @@ class HabitRepository(
 
     fun observeActiveHabits(): Flow<List<Habit>> = habitDao.observeActiveHabits()
 
+    fun observeUsedTemplateIds(): Flow<Set<String>> = habitDao.observeActiveHabits()
+        .map { habits -> habits.mapNotNull { it.templateId }.filter { it.isNotBlank() }.toSet() }
+        .flowOn(ioDispatcher)
+
     fun observeHabit(habitId: Long): Flow<Habit?> = habitDao.observeHabitById(habitId)
+
+    suspend fun getHabit(habitId: Long): Habit? = withContext(ioDispatcher) {
+        habitDao.getHabitById(habitId)
+    }
+
+    fun observeRoutineSummaries(): Flow<List<RoutineSummary>> = habitDao.observeRoutineSummaries()
+
+    fun observeRoutineWithHabits(routineId: Long): Flow<RoutineWithHabits?> =
+        habitDao.observeRoutineWithHabits(routineId)
+
+    fun observeRoutineHabitsForDay(routineId: Long, epochDay: Long): Flow<List<HabitDayState>> {
+        return combine(
+            habitDao.observeHabitsForRoutine(routineId),
+            habitDao.observeCompletedHabitIdsForDay(epochDay)
+        ) { habits, completedIds ->
+            val done = completedIds.toSet()
+            habits.map { habit ->
+                HabitDayState(habit = habit, isCompleted = done.contains(habit.id))
+            }
+        }.flowOn(ioDispatcher)
+    }
+
+    suspend fun getReminderHabits(): List<Habit> = withContext(ioDispatcher) {
+        habitDao.getHabitsWithReminders()
+    }
 
     fun observeCompletionsForHabit(habitId: Long): Flow<List<HabitCompletion>> {
         return habitDao.observeCompletionsForHabit(habitId)
@@ -61,7 +98,12 @@ class HabitRepository(
         reminderHour: Int?,
         reminderMinute: Int?,
         templateId: String?,
-        isPremium: Boolean
+        isPremium: Boolean,
+        frequencyType: HabitFrequencyType = HabitFrequencyType.DAILY,
+        weeklyTarget: Int = 7,
+        dailyTarget: Int = 1,
+        scheduledDays: Set<DayOfWeek> = emptySet(),
+        timesPerDayTarget: Int = 1
     ): HabitCreationResult = withContext(ioDispatcher) {
         val currentHabitCount = habitDao.countActiveHabits()
         if (!isPremium && currentHabitCount >= FREE_HABIT_LIMIT) {
@@ -84,6 +126,11 @@ class HabitRepository(
             description = description.trim(),
             icon = icon,
             frequencyLabel = frequencyLabel,
+            frequencyType = frequencyType.name,
+            weeklyTarget = weeklyTarget.coerceAtLeast(1),
+            dailyTarget = dailyTarget.coerceAtLeast(1),
+            scheduledDays = scheduledDaysToCsv(scheduledDays),
+            timesPerDayTarget = timesPerDayTarget.coerceAtLeast(1),
             reminderEnabled = wantsReminder,
             reminderHour = reminderHour,
             reminderMinute = reminderMinute,
@@ -171,6 +218,73 @@ class HabitRepository(
         HabitCreationResult(success = true, habitId = habitId)
     }
 
+    suspend fun resetAllData() = withContext(ioDispatcher) {
+        habitDao.clearAllCompletions()
+        habitDao.clearAllRoutineHabitRefs()
+        habitDao.clearAllRoutines()
+        habitDao.clearAllHabits()
+    }
+
+    suspend fun exportCsvSnapshot(): String = withContext(ioDispatcher) {
+        val habits = habitDao.getAllHabits()
+        val completions = habitDao.getAllCompletions()
+        buildString {
+            appendLine("section,habitId,name,frequency,frequencyType,dailyTarget,weeklyTarget,scheduledDays,timesPerDayTarget,archived,epochDay,completedAtMillis")
+            habits.forEach { habit ->
+                appendLine(
+                    "habit,${habit.id},\"${habit.name}\",\"${habit.frequencyLabel}\",${habit.frequencyType},${habit.dailyTarget},${habit.weeklyTarget},\"${habit.scheduledDays}\",${habit.timesPerDayTarget},${habit.isArchived},,"
+                )
+            }
+            completions.forEach { completion ->
+                appendLine(
+                    "completion,${completion.habitId},,,,,,,,,${completion.epochDay},${completion.completedAtEpochMillis}"
+                )
+            }
+        }
+    }
+
+    suspend fun reorderHabits(orderedHabitIds: List<Long>) = withContext(ioDispatcher) {
+        orderedHabitIds.forEachIndexed { index, id ->
+            habitDao.updateHabitSortOrder(id, index + 1)
+        }
+    }
+
+    suspend fun createRoutine(
+        name: String,
+        description: String,
+        habitIds: List<Long>
+    ): Long = withContext(ioDispatcher) {
+        val routineId = habitDao.insertRoutine(
+            Routine(
+                name = name.trim(),
+                description = description.trim()
+            )
+        )
+        updateRoutineHabits(routineId, habitIds)
+        routineId
+    }
+
+    suspend fun updateRoutineHabits(routineId: Long, habitIds: List<Long>) = withContext(ioDispatcher) {
+        habitDao.clearRoutineHabitRefs(routineId)
+        habitIds.distinct().forEachIndexed { index, habitId ->
+            habitDao.upsertRoutineHabitRef(
+                RoutineHabitCrossRef(
+                    routineId = routineId,
+                    habitId = habitId,
+                    sortOrder = index
+                )
+            )
+        }
+    }
+
+    suspend fun removeHabitFromRoutine(routineId: Long, habitId: Long) = withContext(ioDispatcher) {
+        habitDao.deleteRoutineHabitRef(routineId, habitId)
+    }
+
+    suspend fun deleteRoutine(routineId: Long) = withContext(ioDispatcher) {
+        habitDao.deleteRoutine(routineId)
+    }
+
     private fun computeNextStreak(lastCompleted: Long?, today: Long, currentStreak: Int): Int {
         return when {
             lastCompleted == null -> 1
@@ -201,4 +315,38 @@ class HabitRepository(
     }
 
     private fun currentEpochDay(): Long = java.time.LocalDate.now().toEpochDay()
+
+    fun Habit.targetForDate(date: LocalDate): Int {
+        if (!isScheduledForDate(date)) return 0
+        return (dailyTarget.coerceAtLeast(1) * timesPerDayTarget.coerceAtLeast(1)).coerceAtLeast(1)
+    }
+
+    fun Habit.isScheduledForDate(date: LocalDate): Boolean {
+        val scheduled = parseScheduledDays(scheduledDays)
+        return when (frequencyType.uppercase()) {
+            HabitFrequencyType.DAILY.name -> scheduled.isEmpty() || scheduled.contains(date.dayOfWeek)
+            HabitFrequencyType.WEEKLY.name -> {
+                if (scheduled.isNotEmpty()) {
+                    scheduled.contains(date.dayOfWeek)
+                } else {
+                    true
+                }
+            }
+
+            else -> true
+        }
+    }
+
+    private fun parseScheduledDays(csv: String): Set<DayOfWeek> {
+        if (csv.isBlank()) return emptySet()
+        return csv.split(",")
+            .mapNotNull { raw ->
+                runCatching { DayOfWeek.valueOf(raw.trim().uppercase()) }.getOrNull()
+            }
+            .toSet()
+    }
+
+    private fun scheduledDaysToCsv(days: Set<DayOfWeek>): String {
+        return days.map { it.name }.sorted().joinToString(",")
+    }
 }

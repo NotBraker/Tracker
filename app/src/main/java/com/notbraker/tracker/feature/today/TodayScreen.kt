@@ -1,25 +1,36 @@
 package com.notbraker.tracker.feature.today
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -29,51 +40,58 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
-import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.notbraker.tracker.core.components.AdPlaceholderCard
 import com.notbraker.tracker.core.components.AnimatedCheckbox
 import com.notbraker.tracker.core.components.AppCard
 import com.notbraker.tracker.core.components.GradientRing
 import com.notbraker.tracker.core.components.SectionHeader
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DragIndicator
+import androidx.compose.material3.Icon
 import com.notbraker.tracker.core.designsystem.HabitColors
 import com.notbraker.tracker.core.designsystem.TrackerTheme
+import com.notbraker.tracker.data.model.RoutineSummary
 
 @Composable
 fun TodayRoute(
     viewModel: TodayViewModel = viewModel(),
-    onHabitClick: (Long) -> Unit = {}
+    onHabitClick: (Long) -> Unit = {},
+    onOpenTemplates: () -> Unit = {},
+    onRoutineClick: (Long) -> Unit = {}
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     TodayScreen(
         state = state,
         onDaySelected = viewModel::selectDay,
         onToggleHabit = viewModel::onToggleHabit,
-        onArchive = viewModel::onArchiveHabit,
-        onDelete = viewModel::onDeleteRequested,
-        onConfirmDelete = viewModel::onConfirmDelete,
-        onDismissDelete = viewModel::onDismissDelete,
         onOpenAdd = viewModel::onOpenAddHabit,
         onDismissAdd = viewModel::onDismissAddHabit,
         onCreateHabit = viewModel::onCreateHabit,
+        onMoveHabit = viewModel::moveHabit,
         onMessageShown = viewModel::consumeMessage,
-        onHabitClick = onHabitClick
+        onHabitClick = onHabitClick,
+        onOpenTemplates = onOpenTemplates,
+        onRoutineClick = onRoutineClick
     )
 }
 
@@ -83,19 +101,48 @@ fun TodayScreen(
     state: TodayUiState,
     onDaySelected: (Long) -> Unit,
     onToggleHabit: (Long, Boolean) -> Unit,
-    onArchive: (Long) -> Unit,
-    onDelete: (Long) -> Unit,
-    onConfirmDelete: () -> Unit,
-    onDismissDelete: () -> Unit,
     onOpenAdd: () -> Unit,
     onDismissAdd: () -> Unit,
     onCreateHabit: (String, String, String, String) -> Unit,
+    onMoveHabit: (Int, Int) -> Unit,
     onMessageShown: () -> Unit,
-    onHabitClick: (Long) -> Unit
+    onHabitClick: (Long) -> Unit,
+    onOpenTemplates: () -> Unit = {},
+    onRoutineClick: (Long) -> Unit = {}
 ) {
     val spacing = TrackerTheme.spacing
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
+    var dragStartIndex by remember { mutableIntStateOf(-1) }
+    var accumulatedY by remember { mutableFloatStateOf(0f) }
+    val density = LocalDensity.current
+    val slotHeightPx = with(density) { 56.dp.toPx() }
+
+    fun onDragStart(idx: Int) {
+        dragStartIndex = idx
+        accumulatedY = 0f
+    }
+    fun onDragDelta(idx: Int, dy: Float) {
+        if (dragStartIndex < 0) return
+        accumulatedY += dy
+        val n = state.cards.size
+        while (accumulatedY > slotHeightPx && dragStartIndex < n - 1) {
+            val to = dragStartIndex + 1
+            onMoveHabit(dragStartIndex, to)
+            dragStartIndex = to
+            accumulatedY -= slotHeightPx
+        }
+        while (accumulatedY < -slotHeightPx && dragStartIndex > 0) {
+            val to = dragStartIndex - 1
+            onMoveHabit(dragStartIndex, to)
+            dragStartIndex = to
+            accumulatedY += slotHeightPx
+        }
+    }
+    fun onDragEnd() {
+        dragStartIndex = -1
+        accumulatedY = 0f
+    }
 
     LaunchedEffect(state.message) {
         state.message?.let {
@@ -106,24 +153,51 @@ fun TodayScreen(
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
-        containerColor = HabitColors.Background,
-        snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
+        containerColor = HabitColors.BackgroundPrimary,
+        contentWindowInsets = WindowInsets.safeDrawing,
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = onOpenAdd,
+                containerColor = HabitColors.SurfaceAccentGlow,
+                contentColor = HabitColors.OnPrimary,
+                shape = MaterialTheme.shapes.medium,
+                modifier = Modifier
+                    .navigationBarsPadding()
+                    .padding(bottom = 16.dp)
+            ) {
+                Text("+")
+            }
+        }
     ) { padding ->
         LazyColumn(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .statusBarsPadding()
                 .padding(horizontal = spacing.md),
-            verticalArrangement = Arrangement.spacedBy(spacing.md)
+            verticalArrangement = Arrangement.spacedBy(spacing.md),
+            contentPadding = PaddingValues(bottom = spacing.xl + spacing.lg)
         ) {
+            if (!state.isPremium) {
+                item {
+                    AdPlaceholderCard()
+                }
+            }
             item {
-                Text(
-                    text = state.title,
-                    style = MaterialTheme.typography.displayLarge.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.onBackground,
-                    modifier = Modifier.padding(top = spacing.md)
-                )
+                Column(
+                    modifier = Modifier
+                        .padding(top = spacing.md)
+                        .fillMaxWidth()
+                ) {
+                    Text(text = state.title, style = MaterialTheme.typography.displayLarge)
+                    Text(
+                        text = "Consistency ${((state.progress) * 100).toInt()}% · ${state.goalsLeft} goals remaining",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = HabitColors.OnSurfaceMuted
+                    )
+                }
             }
             item {
                 WeekSelector(
@@ -136,110 +210,89 @@ fun TodayScreen(
                     GradientRing(
                         progress = state.progress,
                         completed = state.completedCount,
-                        total = state.totalCount
+                        total = state.totalCount.coerceAtLeast(1),
+                        size = 230.dp
                     )
-                    FloatingActionButton(
-                        onClick = onOpenAdd,
-                        containerColor = HabitColors.PrimaryAccent,
-                        contentColor = HabitColors.OnBackground,
-                        modifier = Modifier.size(58.dp)
-                    ) {
-                        Text("+", style = MaterialTheme.typography.titleLarge)
-                    }
                 }
             }
             item {
                 SectionHeader(
-                    title = "My Productivity Boosts",
-                    subtitle = "${state.goalsLeft} goals left today",
+                    title = "My Habit Stack",
+                    subtitle = if (state.isSelectedDayToday) "${state.goalsLeft} goals left today" else "View only",
                     actionLabel = "+ Add",
                     onActionClick = onOpenAdd
                 )
             }
-            items(
-                items = state.cards,
-                key = { card -> card.id }
-            ) { card ->
-                val dismissState = rememberSwipeToDismissBoxState(
-                    confirmValueChange = { value ->
-                        when (value) {
-                            SwipeToDismissBoxValue.StartToEnd -> {
-                                onArchive(card.id)
-                                false
-                            }
-
-                            SwipeToDismissBoxValue.EndToStart -> {
-                                onDelete(card.id)
-                                false
-                            }
-
-                            SwipeToDismissBoxValue.Settled -> false
-                        }
-                    }
-                )
-                SwipeToDismissBox(
-                    state = dismissState,
-                    backgroundContent = {
-                        val color by animateColorAsState(
-                            targetValue = when (dismissState.targetValue) {
-                                SwipeToDismissBoxValue.StartToEnd -> HabitColors.SecondaryAccent.copy(alpha = 0.32f)
-                                SwipeToDismissBoxValue.EndToStart -> MaterialTheme.colorScheme.error.copy(alpha = 0.32f)
-                                SwipeToDismissBoxValue.Settled -> HabitColors.Surface
-                            },
-                            label = "dismissColor"
-                        )
-                        Box(
+            if (state.routineSummaries.isNotEmpty()) {
+                item {
+                    SectionHeader(title = "My Routines", subtitle = "Tap to start or view")
+                }
+                items(state.routineSummaries, key = { it.id }) { routine ->
+                    Surface(
+                        onClick = { onRoutineClick(routine.id) },
+                        shape = MaterialTheme.shapes.medium,
+                        color = HabitColors.Surface
+                    ) {
+                        Row(
                             modifier = Modifier
-                                .fillMaxSize()
-                                .background(color, shape = MaterialTheme.shapes.large)
-                                .padding(horizontal = spacing.lg),
-                            contentAlignment = Alignment.CenterStart
+                                .fillMaxWidth()
+                                .padding(horizontal = spacing.md, vertical = spacing.sm),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
+                            Text(routine.name, style = MaterialTheme.typography.titleMedium)
                             Text(
-                                text = if (dismissState.targetValue == SwipeToDismissBoxValue.EndToStart) "Delete" else "Archive",
-                                color = MaterialTheme.colorScheme.onBackground
+                                "${routine.habitCount} habits",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = HabitColors.OnSurfaceMuted
                             )
                         }
-                    },
-                    content = {
-                        HabitCard(
-                            card = card,
-                            modifier = Modifier.animateItem(),
-                            onToggle = onToggleHabit,
-                            onClick = onHabitClick
-                        )
                     }
+                }
+            }
+            itemsIndexed(
+                items = state.cards,
+                key = { _, card -> card.id }
+            ) { index, card ->
+                HabitCard(
+                    card = card,
+                    index = index,
+                    modifier = Modifier.animateItem(),
+                    isToday = state.isSelectedDayToday,
+                    onToggle = onToggleHabit,
+                    onClick = onHabitClick,
+                    onDragStart = { onDragStart(index) },
+                    onDragDelta = { dy -> onDragDelta(index, dy) },
+                    onDragEnd = { onDragEnd() }
                 )
             }
             item {
-                AnimatedVisibility(
-                    visible = state.cards.isEmpty(),
-                    enter = fadeIn(),
-                    exit = fadeOut()
+                Column(
+                    modifier = Modifier.padding(vertical = spacing.xl),
+                    verticalArrangement = Arrangement.spacedBy(spacing.md)
                 ) {
-                    Text(
-                        text = "No habits yet. Tap + to create your first productivity boost.",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                        modifier = Modifier.padding(vertical = spacing.xl)
-                    )
+                    AnimatedVisibility(visible = state.cards.isEmpty()) {
+                        Text(
+                            text = "No habits yet. Use + to build your first precision streak.",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = HabitColors.OnSurfaceMuted
+                        )
+                    }
+                    Surface(
+                        onClick = onOpenTemplates,
+                        shape = MaterialTheme.shapes.medium,
+                        color = HabitColors.SurfaceAccentGlow
+                    ) {
+                        Text(
+                            text = "Popular habits",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            modifier = Modifier.padding(horizontal = spacing.lg, vertical = spacing.md)
+                        )
+                    }
                 }
             }
         }
-    }
-
-    if (state.pendingDeleteHabitId != null) {
-        AlertDialog(
-            onDismissRequest = onDismissDelete,
-            title = { Text("Delete habit?") },
-            text = { Text("This removes all completion history for this habit.") },
-            dismissButton = {
-                TextButton(onClick = onDismissDelete) { Text("Cancel") }
-            },
-            confirmButton = {
-                TextButton(onClick = onConfirmDelete) { Text("Delete") }
-            }
-        )
     }
 
     if (state.showAddDialog) {
@@ -259,7 +312,7 @@ private fun WeekSelector(
     LazyRow(horizontalArrangement = Arrangement.spacedBy(spacing.xs)) {
         items(weekDays, key = { it.epochDay }) { day ->
             val backgroundColor by animateColorAsState(
-                targetValue = if (day.isSelected) HabitColors.PrimaryAccent.copy(alpha = 0.24f) else HabitColors.Surface,
+                targetValue = if (day.isSelected) HabitColors.SurfaceAccentGlow else HabitColors.Surface,
                 label = "weekdayBackground"
             )
             Surface(
@@ -273,13 +326,25 @@ private fun WeekSelector(
                 ) {
                     Text(
                         text = day.label,
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
                         text = day.dayOfMonth.toString(),
-                        style = MaterialTheme.typography.bodyLarge,
+                        style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Spacer(Modifier.size(spacing.xxs))
+                    Box(
+                        modifier = Modifier
+                            .size(
+                                width = if (day.isSelected) 22.dp else 10.dp,
+                                height = 3.dp
+                            )
+                            .background(
+                                color = if (day.isSelected) HabitColors.HighlightCyan else HabitColors.Surface,
+                                shape = MaterialTheme.shapes.small
+                            )
                     )
                 }
             }
@@ -290,58 +355,110 @@ private fun WeekSelector(
 @Composable
 private fun HabitCard(
     card: HabitCardUi,
+    index: Int,
     modifier: Modifier,
+    isToday: Boolean,
     onToggle: (Long, Boolean) -> Unit,
-    onClick: (Long) -> Unit
+    onClick: (Long) -> Unit,
+    onDragStart: () -> Unit,
+    onDragDelta: (Float) -> Unit,
+    onDragEnd: () -> Unit
 ) {
     val spacing = TrackerTheme.spacing
+    val contentAlpha = when {
+        !isToday -> 0.5f
+        card.isCompleted -> 0.65f
+        else -> 1f
+    }
     val completionAlpha by animateFloatAsState(
-        targetValue = if (card.isCompleted) 0.65f else 1f,
+        targetValue = contentAlpha,
+        animationSpec = tween(durationMillis = TrackerTheme.motion.medium, easing = FastOutSlowInEasing),
         label = "completionAlpha"
     )
+    val accentColor = when ((card.id % 4).toInt()) {
+        0 -> HabitColors.PrimaryElectricBlue
+        1 -> HabitColors.SecondaryViolet
+        2 -> HabitColors.HighlightCyan
+        else -> HabitColors.SuccessGreen
+    }
     AppCard(modifier = modifier) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { onClick(card.id) },
+                .then(
+                    if (isToday) Modifier.clickable { onClick(card.id) }
+                    else Modifier
+                ),
             horizontalArrangement = Arrangement.spacedBy(spacing.sm),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            if (isToday) {
+                Box(
+                    modifier = Modifier
+                        .pointerInput(Unit) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = { onDragStart() },
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    onDragDelta(dragAmount.y)
+                                },
+                                onDragEnd = { onDragEnd() }
+                            )
+                        }
+                        .padding(4.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.DragIndicator,
+                        contentDescription = "Reorder",
+                        tint = HabitColors.OnSurfaceMuted
+                    )
+                }
+            }
             Box(
                 modifier = Modifier
-                    .size(44.dp)
+                    .size(4.dp, 52.dp)
+                    .background(accentColor, shape = MaterialTheme.shapes.small)
+            )
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
                     .background(
                         brush = Brush.linearGradient(
                             colors = listOf(
-                                HabitColors.PrimaryAccent.copy(alpha = 0.36f),
-                                HabitColors.SecondaryAccent.copy(alpha = 0.3f)
+                                accentColor.copy(alpha = 0.4f),
+                                HabitColors.SurfaceAccentGlow.copy(alpha = 0.7f)
                             )
                         ),
                         shape = MaterialTheme.shapes.medium
                     ),
                 contentAlignment = Alignment.Center
             ) {
-                Text(card.icon, style = MaterialTheme.typography.titleLarge)
+                Text(card.icon.takeIf { it.isNotBlank() } ?: "•", style = MaterialTheme.typography.titleMedium)
             }
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .height(54.dp)
+                    .heightIn(min = 52.dp)
             ) {
                 Text(
                     text = card.name,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = completionAlpha)
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = completionAlpha),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = "${card.subtitle}  ·  🔥 ${card.streak}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f * completionAlpha)
+                    text = "${card.subtitle} · target ${card.targetCount} · streak ${card.streak}d",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = HabitColors.OnSurfaceMuted.copy(alpha = completionAlpha),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
             AnimatedCheckbox(
                 checked = card.isCompleted,
-                onCheckedChange = { onToggle(card.id, it) }
+                onCheckedChange = { if (isToday) onToggle(card.id, it) }
             )
         }
     }
@@ -354,14 +471,14 @@ private fun AddHabitDialog(
 ) {
     var name by rememberSaveable { mutableStateOf("") }
     var description by rememberSaveable { mutableStateOf("") }
-    var icon by rememberSaveable { mutableStateOf("✨") }
+    var icon by rememberSaveable { mutableStateOf("T") }
     var frequency by rememberSaveable { mutableStateOf("Daily") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Create Habit") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(TrackerTheme.spacing.sm)) {
                 androidx.compose.material3.OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
@@ -375,8 +492,8 @@ private fun AddHabitDialog(
                 )
                 androidx.compose.material3.OutlinedTextField(
                     value = icon,
-                    onValueChange = { icon = it.take(2) },
-                    label = { Text("Emoji/icon") },
+                    onValueChange = { icon = it.take(1) },
+                    label = { Text("Icon letter") },
                     singleLine = true
                 )
                 androidx.compose.material3.OutlinedTextField(
@@ -392,7 +509,7 @@ private fun AddHabitDialog(
         },
         confirmButton = {
             TextButton(
-                onClick = { onConfirm(name, description, icon.ifBlank { "✨" }, frequency.ifBlank { "Daily" }) },
+                onClick = { onConfirm(name, description, icon.ifBlank { "T" }, frequency.ifBlank { "Daily" }) },
                 enabled = name.isNotBlank()
             ) {
                 Text("Create")

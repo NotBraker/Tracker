@@ -13,7 +13,8 @@ class BootReceiver : BroadcastReceiver() {
         when (intent.action) {
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_TIMEZONE_CHANGED,
-            Intent.ACTION_TIME_CHANGED -> reschedule(context)
+            Intent.ACTION_TIME_CHANGED,
+            "android.intent.action.TIME_SET" -> reschedule(context)
         }
     }
 

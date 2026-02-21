@@ -42,28 +42,56 @@ class TodayViewModel(
             repository.observeTodayHabits(day).map { states -> day to states }
         }
 
-    val uiState: StateFlow<TodayUiState> = combine(dayHabitsFlow, uiFlags) { dayAndStates, flags ->
+    private val weeklyCompletionsFlow = selectedEpochDay.flatMapLatest { day ->
+        val date = LocalDate.ofEpochDay(day)
+        val weekStart = date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)).toEpochDay()
+        val weekEnd = weekStart + 6
+        repository.observeCompletionCountsBetween(weekStart, weekEnd).map { counts -> weekStart to counts }
+    }
+    private val routinesFlow = repository.observeRoutineSummaries()
+
+    val uiState: StateFlow<TodayUiState> = combine(dayHabitsFlow, weeklyCompletionsFlow, routinesFlow, uiFlags) { dayAndStates, weekData, routines, flags ->
         val selectedDay = dayAndStates.first
-        val states = dayAndStates.second
-        val sorted = states.sortedWith(
-            compareBy<HabitDayState> { it.isCompleted }.thenBy { it.habit.sortOrder }.thenBy { it.habit.id }
-        )
+        val states = dayAndStates.second.distinctBy { it.habit.id }
+        val selectedDate = LocalDate.ofEpochDay(selectedDay)
+        val sorted = states.sortedWith(compareBy<HabitDayState> { it.habit.sortOrder }.thenBy { it.habit.id })
         val cards = sorted.map { state ->
+            val target = repository.run { state.habit.targetForDate(selectedDate) }
             HabitCardUi(
                 id = state.habit.id,
                 name = state.habit.name,
-                subtitle = state.habit.frequencyLabel,
+                subtitle = state.habit.frequencyLabel.ifBlank { "Daily" },
                 icon = state.habit.icon,
                 streak = state.habit.streakCurrent,
+                targetCount = target,
                 isCompleted = state.isCompleted
             )
+        }
+        val distinctCards = cards.distinctBy { it.id }
+        val dailyHabits = distinctCards.filter { card ->
+            val habit = states.firstOrNull { it.habit.id == card.id }?.habit ?: return@filter false
+            habit.frequencyType.equals("DAILY", ignoreCase = true) || habit.frequencyLabel.equals("Daily", ignoreCase = true)
+        }
+        val totalTarget = dailyHabits.size
+        val completedCount = dailyHabits.count { it.isCompleted }
+        val weekStart = weekData.first
+        val completionByDay = weekData.second.associateBy({ it.epochDay }, { it.completedCount })
+        val weeklyDone = (0..6).sumOf { index -> completionByDay[weekStart + index] ?: 0 }
+        val dailyStates = states.filter { it.habit.frequencyType.equals("DAILY", ignoreCase = true) || it.habit.frequencyLabel.equals("Daily", ignoreCase = true) }.distinctBy { it.habit.id }
+        val weeklyTarget = (0..6).sumOf { index ->
+            val day = LocalDate.ofEpochDay(weekStart + index)
+            dailyStates.count { state -> repository.run { state.habit.targetForDate(day) > 0 } }
         }
         TodayUiState(
             weekDays = buildWeekDays(selectedDay),
             selectedEpochDay = selectedDay,
             cards = cards,
-            completedCount = cards.count { it.isCompleted },
-            totalCount = cards.size,
+            routineSummaries = routines,
+            completedCount = completedCount,
+            totalCount = totalTarget,
+            weeklyDoneCount = weeklyDone,
+            weeklyTargetCount = weeklyTarget,
+            isPremium = isPremiumProvider(),
             showAddDialog = flags.showAddDialog,
             pendingDeleteHabitId = flags.pendingDeleteHabitId,
             message = flags.message
@@ -153,13 +181,26 @@ class TodayViewModel(
         uiFlags.update { it.copy(message = null) }
     }
 
+    fun moveHabit(fromIndex: Int, toIndex: Int) {
+        val cards = uiState.value.cards
+        if (fromIndex !in cards.indices || toIndex !in cards.indices || fromIndex == toIndex) return
+        viewModelScope.launch {
+            val reordered = cards.map { it.id }.toMutableList()
+            val moved = reordered.removeAt(fromIndex)
+            reordered.add(toIndex, moved)
+            repository.reorderHabits(reordered)
+            onDataChanged()
+        }
+    }
+
     private fun buildWeekDays(selectedDay: Long): List<WeekDayUi> {
         val selectedDate = LocalDate.ofEpochDay(selectedDay)
-        val weekStart = selectedDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.SUNDAY))
+        val weekStart = selectedDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
         return (0..6).map { index ->
             val date = weekStart.plusDays(index.toLong())
+            val dayLabel = date.dayOfWeek.name.take(3).lowercase().replaceFirstChar { it.uppercase() }
             WeekDayUi(
-                label = date.dayOfWeek.name.take(3),
+                label = dayLabel,
                 epochDay = date.toEpochDay(),
                 isSelected = date.toEpochDay() == selectedDay,
                 dayOfMonth = date.dayOfMonth

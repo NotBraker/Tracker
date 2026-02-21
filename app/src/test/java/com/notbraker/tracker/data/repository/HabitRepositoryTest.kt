@@ -5,6 +5,10 @@ import com.notbraker.tracker.data.model.DayCompletionCount
 import com.notbraker.tracker.data.model.Habit
 import com.notbraker.tracker.data.model.HabitCompletion
 import com.notbraker.tracker.data.model.HabitCompletionTotal
+import com.notbraker.tracker.data.model.Routine
+import com.notbraker.tracker.data.model.RoutineHabitCrossRef
+import com.notbraker.tracker.data.model.RoutineSummary
+import com.notbraker.tracker.data.model.RoutineWithHabits
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -120,11 +124,19 @@ private class InMemoryHabitDao : HabitDao {
     private val completions = mutableListOf<HabitCompletion>()
     private val habitsFlow = MutableStateFlow<List<Habit>>(emptyList())
     private val completionsFlow = MutableStateFlow<List<HabitCompletion>>(emptyList())
+    private var nextRoutineId = 1L
+    private val routines = mutableListOf<Routine>()
+    private val routineRefs = mutableListOf<RoutineHabitCrossRef>()
+    private val routinesFlow = MutableStateFlow<List<Routine>>(emptyList())
 
     override fun observeActiveHabits(): Flow<List<Habit>> {
         return habitsFlow.map { list ->
             list.filter { !it.isArchived }.sortedWith(compareBy(Habit::sortOrder, Habit::id))
         }
+    }
+
+    override suspend fun getActiveHabits(): List<Habit> {
+        return habits.filter { !it.isArchived }.sortedWith(compareBy(Habit::sortOrder, Habit::id))
     }
 
     override fun observeHabitById(habitId: Long): Flow<Habit?> {
@@ -144,6 +156,14 @@ private class InMemoryHabitDao : HabitDao {
         val index = habits.indexOfFirst { it.id == habit.id }
         if (index >= 0) {
             habits[index] = habit
+            pushHabits()
+        }
+    }
+
+    override suspend fun updateHabitSortOrder(habitId: Long, sortOrder: Int) {
+        val index = habits.indexOfFirst { it.id == habitId }
+        if (index >= 0) {
+            habits[index] = habits[index].copy(sortOrder = sortOrder)
             pushHabits()
         }
     }
@@ -171,6 +191,8 @@ private class InMemoryHabitDao : HabitDao {
         return habits.filter { !it.isArchived && it.reminderEnabled }
     }
 
+    override suspend fun getAllHabits(): List<Habit> = habits.toList()
+
     override suspend fun upsertCompletion(completion: HabitCompletion) {
         completions.removeAll { it.habitId == completion.habitId && it.epochDay == completion.epochDay }
         completions.add(completion)
@@ -187,10 +209,91 @@ private class InMemoryHabitDao : HabitDao {
         pushCompletions()
     }
 
+    override suspend fun getAllCompletions(): List<HabitCompletion> = completions.toList()
+
+    override suspend fun clearAllCompletions() {
+        completions.clear()
+        pushCompletions()
+    }
+
+    override suspend fun clearAllHabits() {
+        habits.clear()
+        pushHabits()
+    }
+
+    override suspend fun insertRoutine(routine: Routine): Long {
+        val id = nextRoutineId++
+        routines.add(routine.copy(id = id))
+        routinesFlow.value = routines.toList()
+        return id
+    }
+
+    override suspend fun deleteRoutine(routineId: Long) {
+        routines.removeAll { it.id == routineId }
+        routineRefs.removeAll { it.routineId == routineId }
+        routinesFlow.value = routines.toList()
+    }
+
+    override suspend fun upsertRoutineHabitRef(ref: RoutineHabitCrossRef) {
+        routineRefs.removeAll { it.routineId == ref.routineId && it.habitId == ref.habitId }
+        routineRefs.add(ref)
+    }
+
+    override suspend fun clearRoutineHabitRefs(routineId: Long) {
+        routineRefs.removeAll { it.routineId == routineId }
+    }
+
+    override suspend fun clearAllRoutineHabitRefs() {
+        routineRefs.clear()
+    }
+
+    override suspend fun clearAllRoutines() {
+        routines.clear()
+        routineRefs.clear()
+        routinesFlow.value = emptyList()
+    }
+
+    override suspend fun deleteRoutineHabitRef(routineId: Long, habitId: Long) {
+        routineRefs.removeAll { it.routineId == routineId && it.habitId == habitId }
+    }
+
+    override fun observeRoutineSummaries(): Flow<List<RoutineSummary>> {
+        return routinesFlow.map { list ->
+            list.map { routine ->
+                RoutineSummary(
+                    id = routine.id,
+                    name = routine.name,
+                    description = routine.description,
+                    habitCount = routineRefs.count { it.routineId == routine.id }
+                )
+            }
+        }
+    }
+
+    override fun observeRoutineWithHabits(routineId: Long): Flow<RoutineWithHabits?> {
+        return routinesFlow.map {
+            val routine = routines.firstOrNull { it.id == routineId } ?: return@map null
+            val ids = routineRefs.filter { it.routineId == routineId }.sortedBy { it.sortOrder }.map { it.habitId }
+            val routineHabits = ids.mapNotNull { id -> habits.firstOrNull { it.id == id } }
+            RoutineWithHabits(routine = routine, habits = routineHabits)
+        }
+    }
+
+    override fun observeHabitsForRoutine(routineId: Long): Flow<List<Habit>> {
+        return habitsFlow.map {
+            val ids = routineRefs.filter { ref -> ref.routineId == routineId }.sortedBy { it.sortOrder }.map { it.habitId }
+            ids.mapNotNull { id -> habits.firstOrNull { it.id == id && !it.isArchived } }
+        }
+    }
+
     override fun observeCompletedHabitIdsForDay(epochDay: Long): Flow<List<Long>> {
         return completionsFlow.map { list ->
             list.filter { it.epochDay == epochDay }.map { it.habitId }
         }
+    }
+
+    override suspend fun getCompletedHabitIdsForDay(epochDay: Long): List<Long> {
+        return completions.filter { it.epochDay == epochDay }.map { it.habitId }
     }
 
     override fun observeCompletionsForHabit(habitId: Long): Flow<List<HabitCompletion>> {

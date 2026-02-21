@@ -11,6 +11,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import com.notbraker.tracker.core.designsystem.HabitColors
 
 @Composable
@@ -30,13 +31,18 @@ fun SectionHeader(
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onBackground
+                color = MaterialTheme.colorScheme.onBackground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
+            PulseLine(modifier = Modifier)
             if (!subtitle.isNullOrBlank()) {
                 Text(
                     text = subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    style = MaterialTheme.typography.labelMedium,
+                    color = HabitColors.OnSurfaceMuted,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
@@ -45,7 +51,7 @@ fun SectionHeader(
                 onClick = onActionClick,
                 label = { Text(actionLabel) },
                 colors = AssistChipDefaults.assistChipColors(
-                    containerColor = HabitColors.PrimaryAccent.copy(alpha = 0.2f),
+                    containerColor = HabitColors.SurfaceAccentGlow,
                     labelColor = MaterialTheme.colorScheme.onBackground
                 )
             )

@@ -3,6 +3,7 @@ package com.notbraker.tracker.feature.habitdetail
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.notbraker.tracker.data.model.HabitFrequencyType
 import com.notbraker.tracker.data.repository.HabitRepository
 import java.time.LocalDate
 import kotlinx.coroutines.flow.SharingStarted
@@ -16,12 +17,16 @@ data class HabitDetailUiState(
     val name: String = "",
     val icon: String = "✨",
     val description: String = "",
+    val frequencyLabel: String = "Daily",
+    val frequencyType: String = "DAILY",
     val streakCurrent: Int = 0,
     val streakLongest: Int = 0,
     val completionRate: Float = 0f,
     val miniGrid: List<Boolean> = emptyList(),
     val reminderEnabled: Boolean = false,
     val reminderTimeText: String = "No reminder",
+    val reminderHour: Int? = null,
+    val reminderMinute: Int? = null,
     val isPremium: Boolean = false,
     val message: String? = null
 )
@@ -51,21 +56,27 @@ class HabitDetailViewModel(
             val miniGrid = (0 until 28).map { offset ->
                 completionSet.contains(today - (27 - offset))
             }
+            val reminderHour = (habit.reminderHour ?: 8).coerceIn(0, 23)
+            val reminderMinute = (habit.reminderMinute ?: 0).coerceIn(0, 59)
             HabitDetailUiState(
                 habitId = habit.id,
                 name = habit.name,
                 icon = habit.icon,
                 description = habit.description,
+                frequencyLabel = habit.frequencyLabel.ifBlank { "Daily" },
+                frequencyType = habit.frequencyType.ifBlank { HabitFrequencyType.DAILY.name },
                 streakCurrent = habit.streakCurrent,
                 streakLongest = habit.streakLongest,
                 completionRate = completionRate,
                 miniGrid = miniGrid,
                 reminderEnabled = habit.reminderEnabled,
                 reminderTimeText = if (habit.reminderEnabled) {
-                    "${habit.reminderHour?.toString()?.padStart(2, '0')}:${habit.reminderMinute?.toString()?.padStart(2, '0')}"
+                    "${reminderHour.toString().padStart(2, '0')}:${reminderMinute.toString().padStart(2, '0')}"
                 } else {
                     "No reminder"
                 },
+                reminderHour = if (habit.reminderEnabled) reminderHour else null,
+                reminderMinute = if (habit.reminderEnabled) reminderMinute else null,
                 isPremium = isPremiumProvider()
             )
         }
@@ -94,6 +105,27 @@ class HabitDetailViewModel(
                 )
                 onDataChanged()
             }
+        }
+    }
+
+    fun updateHabit(
+        name: String,
+        description: String,
+        icon: String,
+        frequencyLabel: String,
+        frequencyType: String
+    ) {
+        viewModelScope.launch {
+            val current = repository.getHabit(habitId) ?: return@launch
+            val updated = current.copy(
+                name = name.trim(),
+                description = description.trim(),
+                icon = icon.ifBlank { current.icon }.take(1),
+                frequencyLabel = frequencyLabel.ifBlank { "Daily" },
+                frequencyType = frequencyType.ifBlank { HabitFrequencyType.DAILY.name }
+            )
+            repository.updateHabit(updated)
+            onDataChanged()
         }
     }
 

@@ -1,6 +1,8 @@
 package com.notbraker.tracker.billing
 
+import android.app.Activity
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.preferencesDataStore
@@ -19,37 +21,64 @@ class FakeBillingManager(private val context: Context) : BillingManager {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val premiumKey = booleanPreferencesKey("premium_enabled")
-    private val _isPremium = MutableStateFlow(false)
-    override val isPremium: StateFlow<Boolean> = _isPremium.asStateFlow()
+    private val _billingState = MutableStateFlow(BillingUiState())
+    override val billingState: StateFlow<BillingUiState> = _billingState.asStateFlow()
 
     init {
         scope.launch {
             context.billingDataStore.data
                 .map { prefs -> prefs[premiumKey] ?: false }
-                .collect { value -> _isPremium.value = value }
+                .collect { premium ->
+                    _billingState.value = _billingState.value.copy(
+                        isPremium = premium,
+                        activePlan = if (premium) SubscriptionPlan.YEARLY else null
+                    )
+                }
         }
     }
 
-    override suspend fun startPurchaseFlow(): BillingResult {
-        setPremium(true)
-        return BillingResult(success = true, message = "Premium unlocked.")
+    override suspend fun refreshEntitlements() {
+        // State is continuously mirrored from DataStore.
+    }
+
+    override fun startPurchaseFlow(activity: Activity, plan: SubscriptionPlan): BillingResult {
+        return if (!isDebuggable()) {
+            BillingResult(success = false, message = "Debug purchase adapter disabled in release builds.")
+        } else {
+            scope.launch { setPremium(true) }
+            BillingResult(success = true, message = "Debug premium enabled for ${plan.name.lowercase()}.")
+        }
     }
 
     override suspend fun restorePurchases(): BillingResult {
-        return BillingResult(success = true, message = "Purchases restored.")
+        return BillingResult(success = true, message = "Debug restore complete.")
     }
 
-    override suspend fun setPremiumOverride(enabled: Boolean): BillingResult {
+    override suspend fun setDebugPremiumOverride(enabled: Boolean): BillingResult {
+        if (!isDebuggable()) {
+            return BillingResult(success = false, message = "Debug override unavailable.")
+        }
         setPremium(enabled)
-        return BillingResult(
-            success = true,
-            message = if (enabled) "Premium enabled." else "Premium disabled."
+        _billingState.value = _billingState.value.copy(
+            isPremium = enabled,
+            activePlan = if (enabled) SubscriptionPlan.YEARLY else null
         )
+        return BillingResult(success = true, message = if (enabled) "Debug premium enabled." else "Debug premium disabled.")
+    }
+
+    override suspend fun clearPremiumForReset(): BillingResult {
+        setPremium(false)
+        _billingState.value = _billingState.value.copy(isPremium = false, activePlan = null)
+        return BillingResult(success = true, message = "Premium cleared for reset.")
     }
 
     private suspend fun setPremium(enabled: Boolean) {
         context.billingDataStore.edit { prefs ->
             prefs[premiumKey] = enabled
         }
+    }
+
+    private fun isDebuggable(): Boolean {
+        return (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
     }
 }
