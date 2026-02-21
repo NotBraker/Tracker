@@ -44,8 +44,11 @@ class TodayWidget : GlanceAppWidget() {
         val today = todayDate.toEpochDay()
         val habits = dao.getActiveHabits()
         val completedHabitIds = dao.getCompletedHabitIdsForDay(today).toSet()
-        val total = habits.sumOf { habit -> habit.targetForDate(todayDate) }
-        val completed = habits.count { habit -> habit.targetForDate(todayDate) > 0 && completedHabitIds.contains(habit.id) }
+        val dailyHabits = habits.filter { h ->
+            h.frequencyType.equals("DAILY", ignoreCase = true) || h.frequencyLabel.equals("Daily", ignoreCase = true)
+        }.filter { it.targetForDate(todayDate) > 0 }
+        val total = dailyHabits.size
+        val completed = dailyHabits.count { completedHabitIds.contains(it.id) }
         val progress = if (total == 0) 0f else (completed.toFloat() / total.toFloat()).coerceIn(0f, 1f)
         val premiumFromState = context.billingDataStore.data.first()[booleanPreferencesKey("premium_enabled")] ?: false
         val premiumFromDebug = context.debugBillingDataStore.data.first()[booleanPreferencesKey("premium_enabled")] ?: false

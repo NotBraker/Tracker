@@ -259,9 +259,7 @@ fun AppNavGraph(
                 )
             }
             composable(AppRoute.Templates.route) {
-                val usedTemplateIds by appContainer.repository.observeUsedTemplateIds().collectAsStateWithLifecycle(initialValue = emptySet())
                 TemplatesScreen(
-                    usedTemplateIds = usedTemplateIds,
                     onBack = { navController.popBackStack() },
                     onTemplateCreate = { template ->
                         scope.launch {

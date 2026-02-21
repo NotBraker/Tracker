@@ -41,25 +41,23 @@ data class HabitTemplate(
 )
 
 private val templates = listOf(
-    HabitTemplate("hydrate", "Health", "Hydration Protocol", "Reach daily water target.", "H", listOf("DAILY", "TARGET"), 9, 0),
-    HabitTemplate("mobility", "Health", "Mobility Session", "10-minute mobility reset.", "M", listOf("DAILY"), 7, 30),
-    HabitTemplate("steps", "Performance", "8k Steps", "Hit 8,000+ movement baseline.", "P", listOf("DAILY", "TARGET"), 18, 0),
-    HabitTemplate("deep_work", "Focus", "Deep Work Block", "Single uninterrupted 60-minute sprint.", "F", listOf("DAILY"), 10, 0),
-    HabitTemplate("next_day_plan", "Focus", "Plan Next Day", "Define top priorities before shutdown.", "N", listOf("WEEKLY"), 20, 0),
-    HabitTemplate("read", "Learning", "Read 30 Minutes", "Deliberate reading session.", "L", listOf("DAILY"), 21, 0),
-    HabitTemplate("language", "Learning", "Language Practice", "Spaced repetition and speaking drill.", "S", listOf("WEEKLY"), 19, 30),
-    HabitTemplate("discipline_sleep", "Discipline", "Sleep Start Time", "Lock bedtime discipline window.", "D", listOf("DAILY", "TARGET"), 22, 0)
+    HabitTemplate("PH1", "Health", "Hydration Protocol", "Reach daily water target.", "H", listOf("DAILY", "TARGET"), 9, 0),
+    HabitTemplate("PH2", "Health", "Mobility Session", "10-minute mobility reset.", "M", listOf("DAILY"), 7, 30),
+    HabitTemplate("PH3", "Performance", "8k Steps", "Hit 8,000+ movement baseline.", "P", listOf("DAILY", "TARGET"), 18, 0),
+    HabitTemplate("PH4", "Focus", "Deep Work Block", "Single uninterrupted 60-minute sprint.", "F", listOf("DAILY"), 10, 0),
+    HabitTemplate("PH5", "Focus", "Plan Next Day", "Define top priorities before shutdown.", "N", listOf("WEEKLY"), 20, 0),
+    HabitTemplate("PH6", "Learning", "Read 30 Minutes", "Deliberate reading session.", "L", listOf("DAILY"), 21, 0),
+    HabitTemplate("PH7", "Learning", "Language Practice", "Spaced repetition and speaking drill.", "S", listOf("WEEKLY"), 19, 30),
+    HabitTemplate("PH8", "Discipline", "Sleep Start Time", "Lock bedtime discipline window.", "D", listOf("DAILY", "TARGET"), 22, 0)
 )
 
 @Composable
 fun TemplatesScreen(
     onTemplateCreate: (HabitTemplate) -> Unit,
-    onBack: () -> Unit = {},
-    usedTemplateIds: Set<String> = emptySet()
+    onBack: () -> Unit = {}
 ) {
     val spacing = TrackerTheme.spacing
     var selectedTemplate by remember { mutableStateOf<HabitTemplate?>(null) }
-    val visibleTemplates = templates.filter { it.id !in usedTemplateIds }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -89,7 +87,7 @@ fun TemplatesScreen(
                 }
             }
 
-            visibleTemplates.groupBy { it.category }.forEach { (category, entries) ->
+            templates.groupBy { it.category }.forEach { (category, entries) ->
                 item {
                     SectionHeader(title = category)
                 }

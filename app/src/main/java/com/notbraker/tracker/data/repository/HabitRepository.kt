@@ -19,7 +19,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
 class HabitRepository(
@@ -54,10 +53,6 @@ class HabitRepository(
     ): Flow<List<HabitCompletionTotal>> = habitDao.observeCompletionTotalsByHabit(fromEpochDay, toEpochDay)
 
     fun observeActiveHabits(): Flow<List<Habit>> = habitDao.observeActiveHabits()
-
-    fun observeUsedTemplateIds(): Flow<Set<String>> = habitDao.observeActiveHabits()
-        .map { habits -> habits.mapNotNull { it.templateId }.filter { it.isNotBlank() }.toSet() }
-        .flowOn(ioDispatcher)
 
     fun observeHabit(habitId: Long): Flow<Habit?> = habitDao.observeHabitById(habitId)
 
