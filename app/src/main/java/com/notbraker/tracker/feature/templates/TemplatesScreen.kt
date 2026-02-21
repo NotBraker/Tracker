@@ -23,41 +23,27 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.notbraker.tracker.core.components.AppCard
 import com.notbraker.tracker.core.components.SectionHeader
 import com.notbraker.tracker.core.designsystem.HabitColors
 import com.notbraker.tracker.core.designsystem.TrackerTheme
-
-data class HabitTemplate(
-    val id: String,
-    val category: String,
-    val title: String,
-    val description: String,
-    val icon: String,
-    val tags: List<String>,
-    val defaultReminderHour: Int,
-    val defaultReminderMinute: Int
-)
-
-private val templates = listOf(
-    HabitTemplate("PH1", "Health", "Hydration Protocol", "Reach daily water target.", "H", listOf("DAILY", "TARGET"), 9, 0),
-    HabitTemplate("PH2", "Health", "Mobility Session", "10-minute mobility reset.", "M", listOf("DAILY"), 7, 30),
-    HabitTemplate("PH3", "Performance", "8k Steps", "Hit 8,000+ movement baseline.", "P", listOf("DAILY", "TARGET"), 18, 0),
-    HabitTemplate("PH4", "Focus", "Deep Work Block", "Single uninterrupted 60-minute sprint.", "F", listOf("DAILY"), 10, 0),
-    HabitTemplate("PH5", "Focus", "Plan Next Day", "Define top priorities before shutdown.", "N", listOf("WEEKLY"), 20, 0),
-    HabitTemplate("PH6", "Learning", "Read 30 Minutes", "Deliberate reading session.", "L", listOf("DAILY"), 21, 0),
-    HabitTemplate("PH7", "Learning", "Language Practice", "Spaced repetition and speaking drill.", "S", listOf("WEEKLY"), 19, 30),
-    HabitTemplate("PH8", "Discipline", "Sleep Start Time", "Lock bedtime discipline window.", "D", listOf("DAILY", "TARGET"), 22, 0)
-)
+import com.notbraker.tracker.data.template.TemplateCatalog
+import com.notbraker.tracker.data.template.getHiddenTemplateIdsFlow
 
 @Composable
 fun TemplatesScreen(
-    onTemplateCreate: (HabitTemplate) -> Unit,
+    onTemplateCreate: (TemplateCatalog.Template) -> Unit,
     onBack: () -> Unit = {}
 ) {
+    val context = LocalContext.current.applicationContext
+    val hiddenTemplateIds by context.getHiddenTemplateIdsFlow().collectAsStateWithLifecycle(initialValue = emptySet())
+    val visibleTemplates = TemplateCatalog.allTemplates.filter { it.id !in hiddenTemplateIds }
+
     val spacing = TrackerTheme.spacing
-    var selectedTemplate by remember { mutableStateOf<HabitTemplate?>(null) }
+    var selectedTemplate by remember { mutableStateOf<TemplateCatalog.Template?>(null) }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -75,7 +61,7 @@ fun TemplatesScreen(
                 Column {
                     TextButton(onClick = onBack) { Text("Back") }
                     Text(
-                        text = "Templates",
+                        text = "Popular Habits",
                         style = MaterialTheme.typography.displayLarge,
                         color = MaterialTheme.colorScheme.onBackground
                     )
@@ -87,7 +73,7 @@ fun TemplatesScreen(
                 }
             }
 
-            templates.groupBy { it.category }.forEach { (category, entries) ->
+            visibleTemplates.groupBy { it.category }.forEach { (category, entries) ->
                 item {
                     SectionHeader(title = category)
                 }

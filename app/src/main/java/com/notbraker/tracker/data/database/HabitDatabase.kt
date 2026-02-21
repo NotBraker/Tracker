@@ -14,7 +14,7 @@ import com.notbraker.tracker.data.model.RoutineHabitCrossRef
 
 @Database(
     entities = [Habit::class, HabitCompletion::class, Routine::class, RoutineHabitCrossRef::class],
-    version = 2,
+    version = 3,
     exportSchema = true
 )
 abstract class HabitDatabase : RoomDatabase() {
@@ -55,6 +55,12 @@ abstract class HabitDatabase : RoomDatabase() {
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_routine_habit_cross_ref_habitId ON routine_habit_cross_ref(habitId)")
             }
         }
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE habits ADD COLUMN originType TEXT NOT NULL DEFAULT 'CUSTOM'")
+                database.execSQL("ALTER TABLE habits ADD COLUMN templateTag TEXT")
+            }
+        }
 
         @Volatile
         private var instance: HabitDatabase? = null
@@ -66,7 +72,7 @@ abstract class HabitDatabase : RoomDatabase() {
                     klass = HabitDatabase::class.java,
                     name = DB_NAME
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .build()
                     .also { instance = it }
             }

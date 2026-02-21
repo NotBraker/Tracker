@@ -29,7 +29,7 @@ private data class TodayUiFlags(
 class TodayViewModel(
     private val repository: HabitRepository,
     private val isPremiumProvider: () -> Boolean = { false },
-    private val onHabitDeleted: (Long) -> Unit = {},
+    private val onHabitDeleted: (Long, String?) -> Unit = { _, _ -> },
     private val onHabitArchived: (Long) -> Unit = {},
     private val onDataChanged: () -> Unit = {}
 ) : ViewModel() {
@@ -133,8 +133,8 @@ class TodayViewModel(
     fun onConfirmDelete() {
         val habitId = uiFlags.value.pendingDeleteHabitId ?: return
         viewModelScope.launch {
-            repository.deleteHabit(habitId)
-            onHabitDeleted(habitId)
+            val templateId = repository.deleteHabitAndGetTemplateId(habitId)
+            onHabitDeleted(habitId, templateId)
             onDataChanged()
             uiFlags.update { it.copy(pendingDeleteHabitId = null, message = "Habit deleted") }
         }
@@ -163,6 +163,7 @@ class TodayViewModel(
                 reminderHour = null,
                 reminderMinute = null,
                 templateId = null,
+                templateTag = null,
                 isPremium = isPremiumProvider()
             )
             uiFlags.update {
@@ -212,7 +213,7 @@ class TodayViewModel(
 class TodayViewModelFactory(
     private val repository: HabitRepository,
     private val isPremiumProvider: () -> Boolean = { false },
-    private val onHabitDeleted: (Long) -> Unit = {},
+    private val onHabitDeleted: (Long, String?) -> Unit = { _, _ -> },
     private val onHabitArchived: (Long) -> Unit = {},
     private val onDataChanged: () -> Unit = {}
 ) : ViewModelProvider.Factory {

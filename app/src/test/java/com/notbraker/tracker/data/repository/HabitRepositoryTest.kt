@@ -56,6 +56,7 @@ class HabitRepositoryTest {
             reminderHour = null,
             reminderMinute = null,
             templateId = null,
+            templateTag = null,
             isPremium = false
         )
 
@@ -86,6 +87,7 @@ class HabitRepositoryTest {
             reminderHour = 7,
             reminderMinute = 30,
             templateId = null,
+            templateTag = null,
             isPremium = false
         )
 

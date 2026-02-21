@@ -70,6 +70,9 @@ import com.notbraker.tracker.feature.toolkit.routines.RoutineSessionViewModelFac
 import com.notbraker.tracker.feature.toolkit.routines.RoutinesRoute
 import com.notbraker.tracker.feature.toolkit.routines.RoutinesViewModel
 import com.notbraker.tracker.feature.toolkit.routines.RoutinesViewModelFactory
+import com.notbraker.tracker.data.template.addHiddenTemplateId
+import com.notbraker.tracker.data.template.clearHiddenTemplateIds
+import com.notbraker.tracker.data.template.removeHiddenTemplateId
 import com.notbraker.tracker.onboarding.setOnboardingCompleted
 import com.notbraker.tracker.widget.TodayWidgetUpdater
 import java.time.DayOfWeek
@@ -126,7 +129,16 @@ fun AppNavGraph(
     val refreshWidget: () -> Unit = {
         scope.launch { TodayWidgetUpdater.update(appContainer.appContext) }
     }
-    val cancelReminderAndRefresh: (Long) -> Unit = { habitId ->
+    val onHabitDeletedCallback: (Long, String?) -> Unit = { habitId, templateId ->
+        appContainer.reminderScheduler.cancelReminder(habitId)
+        refreshWidget()
+        templateId?.let { id ->
+            scope.launch {
+                appContainer.appContext.removeHiddenTemplateId(id)
+            }
+        }
+    }
+    val onHabitArchivedCallback: (Long) -> Unit = { habitId ->
         appContainer.reminderScheduler.cancelReminder(habitId)
         refreshWidget()
     }
@@ -229,8 +241,8 @@ fun AppNavGraph(
                     factory = TodayViewModelFactory(
                         repository = appContainer.repository,
                         isPremiumProvider = { isPremium },
-                        onHabitDeleted = cancelReminderAndRefresh,
-                        onHabitArchived = cancelReminderAndRefresh,
+                        onHabitDeleted = onHabitDeletedCallback,
+                        onHabitArchived = onHabitArchivedCallback,
                         onDataChanged = refreshWidget
                     )
                 )
@@ -273,6 +285,7 @@ fun AppNavGraph(
                                 reminderHour = template.defaultReminderHour,
                                 reminderMinute = template.defaultReminderMinute,
                                 templateId = template.id,
+                                templateTag = template.templateTag,
                                 isPremium = isPremium,
                                 frequencyType = if (isWeekly) HabitFrequencyType.WEEKLY else HabitFrequencyType.DAILY,
                                 weeklyTarget = if (isWeekly) 4 else 7,
@@ -284,6 +297,7 @@ fun AppNavGraph(
                                 }
                             )
                             if (result.success && result.habitId != null) {
+                                appContainer.appContext.addHiddenTemplateId(template.id)
                                 appContainer.reminderScheduler.scheduleDailyReminder(
                                     habitId = result.habitId,
                                     habitName = template.title,
@@ -317,6 +331,7 @@ fun AppNavGraph(
                         scope.launch {
                             appContainer.repository.resetAllData()
                             appContainer.billingManager.clearPremiumForReset()
+                            context.applicationContext.clearHiddenTemplateIds()
                             context.applicationContext.setOnboardingCompleted(false)
                             refreshWidget()
                         }
@@ -377,8 +392,8 @@ fun AppNavGraph(
                         habitId = habitId,
                         repository = appContainer.repository,
                         isPremiumProvider = { isPremium },
-                        onHabitDeleted = cancelReminderAndRefresh,
-                        onHabitArchived = cancelReminderAndRefresh,
+                        onHabitDeleted = onHabitDeletedCallback,
+                        onHabitArchived = onHabitArchivedCallback,
                         onReminderUpdated = onReminderUpdated,
                         onDataChanged = refreshWidget
                     )

@@ -2,6 +2,8 @@ package com.notbraker.tracker.data.repository
 
 import com.notbraker.tracker.data.dao.HabitDao
 import com.notbraker.tracker.data.model.DayCompletionCount
+import com.notbraker.tracker.data.model.HABIT_ORIGIN_CUSTOM
+import com.notbraker.tracker.data.model.HABIT_ORIGIN_TEMPLATE
 import com.notbraker.tracker.data.model.Habit
 import com.notbraker.tracker.data.model.HabitCompletion
 import com.notbraker.tracker.data.model.HabitCompletionTotal
@@ -93,6 +95,7 @@ class HabitRepository(
         reminderHour: Int?,
         reminderMinute: Int?,
         templateId: String?,
+        templateTag: String?,
         isPremium: Boolean,
         frequencyType: HabitFrequencyType = HabitFrequencyType.DAILY,
         weeklyTarget: Int = 7,
@@ -116,6 +119,7 @@ class HabitRepository(
             )
         }
 
+        val isFromTemplate = templateId != null && templateId.isNotBlank()
         val newHabit = Habit(
             name = name.trim(),
             description = description.trim(),
@@ -131,7 +135,9 @@ class HabitRepository(
             reminderMinute = reminderMinute,
             createdAtEpochDay = currentEpochDay(),
             sortOrder = currentHabitCount + 1,
-            templateId = templateId
+            templateId = templateId,
+            originType = if (isFromTemplate) HABIT_ORIGIN_TEMPLATE else HABIT_ORIGIN_CUSTOM,
+            templateTag = templateTag
         )
         val habitId = habitDao.insertHabit(newHabit)
         HabitCreationResult(success = true, habitId = habitId)
@@ -148,6 +154,15 @@ class HabitRepository(
     suspend fun deleteHabit(habitId: Long) = withContext(ioDispatcher) {
         habitDao.deleteCompletionsForHabit(habitId)
         habitDao.deleteHabit(habitId)
+    }
+
+    /** Returns templateId of the deleted habit if it was template-derived, for unhiding the template. */
+    suspend fun deleteHabitAndGetTemplateId(habitId: Long): String? = withContext(ioDispatcher) {
+        val habit = habitDao.getHabitById(habitId)
+        val templateId = habit?.templateId?.takeIf { it.isNotBlank() }
+        habitDao.deleteCompletionsForHabit(habitId)
+        habitDao.deleteHabit(habitId)
+        templateId
     }
 
     suspend fun setHabitCompletion(

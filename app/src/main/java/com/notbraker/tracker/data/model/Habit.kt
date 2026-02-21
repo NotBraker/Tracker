@@ -13,6 +13,9 @@ enum class HabitFrequencyType {
     WEEKLY
 }
 
+const val HABIT_ORIGIN_CUSTOM = "CUSTOM"
+const val HABIT_ORIGIN_TEMPLATE = "TEMPLATE"
+
 @Entity(tableName = "habits")
 data class Habit(
     @PrimaryKey(autoGenerate = true) val id: Long = 0L,
@@ -32,6 +35,8 @@ data class Habit(
     val streakLongest: Int = 0,
     val lastCompletedEpochDay: Long? = null,
     val templateId: String? = null,
+    val originType: String = HABIT_ORIGIN_CUSTOM,
+    val templateTag: String? = null,
     val isArchived: Boolean = false,
     val createdAtEpochDay: Long,
     val sortOrder: Int = 0

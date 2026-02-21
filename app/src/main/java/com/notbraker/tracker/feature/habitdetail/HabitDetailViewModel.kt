@@ -35,7 +35,7 @@ class HabitDetailViewModel(
     private val habitId: Long,
     private val repository: HabitRepository,
     private val isPremiumProvider: () -> Boolean = { false },
-    private val onHabitDeleted: (Long) -> Unit = {},
+    private val onHabitDeleted: (Long, String?) -> Unit = { _, _ -> },
     private val onHabitArchived: (Long) -> Unit = {},
     private val onReminderUpdated: (Long, String, Boolean, Int?, Int?) -> Unit = { _, _, _, _, _ -> },
     private val onDataChanged: () -> Unit = {}
@@ -139,8 +139,8 @@ class HabitDetailViewModel(
 
     fun deleteHabit() {
         viewModelScope.launch {
-            repository.deleteHabit(habitId)
-            onHabitDeleted(habitId)
+            val templateId = repository.deleteHabitAndGetTemplateId(habitId)
+            onHabitDeleted(habitId, templateId)
             onDataChanged()
         }
     }
@@ -150,7 +150,7 @@ class HabitDetailViewModelFactory(
     private val habitId: Long,
     private val repository: HabitRepository,
     private val isPremiumProvider: () -> Boolean = { false },
-    private val onHabitDeleted: (Long) -> Unit = {},
+    private val onHabitDeleted: (Long, String?) -> Unit = { _, _ -> },
     private val onHabitArchived: (Long) -> Unit = {},
     private val onReminderUpdated: (Long, String, Boolean, Int?, Int?) -> Unit = { _, _, _, _, _ -> },
     private val onDataChanged: () -> Unit = {}
